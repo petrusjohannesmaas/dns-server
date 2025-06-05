@@ -1,0 +1,5 @@
+records:
+  - hostname: "lubuntu.local"
+    ip: "192.168.0.102"
+  - hostname: "debian.local"
+    ip: "192.168.0.112"
