@@ -229,4 +229,99 @@ dig @192.168.1.100 dev-machine.local
 ✔ **Persistent database storage**: Store records in **SQLite** instead of just YAML.  
 ✔ **Security measures**: Add authentication to prevent unauthorized changes.  
 
-Would you like help setting up automatic reloads or adding authentication for secure record updates? 🚀
+Containerizing your **Go-based DNS server** with Docker will make deployment easier across different environments. Here’s how to do it step by step:
+
+---
+
+## **Step 1: Create a Dockerfile**
+Inside your project folder, create a `Dockerfile`:
+
+```dockerfile
+# Use a lightweight Go image
+FROM golang:latest
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the Go module files & download dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the source code into the container
+COPY . .
+
+# Build the application
+RUN go build -o dns-server dns_server.go
+
+# Expose DNS port (UDP)
+EXPOSE 53/udp
+
+# Expose HTTP API port (optional)
+EXPOSE 8080
+
+# Start the DNS server
+CMD ["./dns-server"]
+```
+
+---
+
+## **Step 2: Create a Docker Compose File (Optional)**
+If you want to manage multiple services (e.g., a database or a proxy), use `docker-compose.yaml`:
+
+```yaml
+version: '3.8'
+
+services:
+  dns-server:
+    build: .
+    container_name: dns_server
+    restart: always
+    ports:
+      - "53:53/udp"
+      - "8080:8080"
+    volumes:
+      - ./dns_records.yaml:/app/dns_records.yaml
+```
+
+---
+
+## **Step 3: Build & Run the Container**
+Run these commands in your project directory:
+
+```bash
+docker build -t go-dns-server .
+docker run -d --name dns-server -p 53:53/udp -p 8080:8080 go-dns-server
+```
+
+If using **Docker Compose**, start everything with:
+```bash
+docker-compose up -d
+```
+
+---
+
+## **Step 4: Verify the Container is Running**
+Check logs:
+```bash
+docker logs dns-server
+```
+
+Test DNS resolution:
+```bash
+dig @localhost dev-machine.local
+```
+
+---
+
+## **Step 5: Set Up Your Router**
+- Go to your **Tenda router** admin panel.
+- Locate **DNS settings**.
+- Set the **Preferred DNS Server** to your **container’s IP** (e.g., `192.168.1.100`).
+- Apply & restart the router.
+
+---
+
+## **Next Enhancements**
+✔ **Persistent storage**: Mount `dns_records.yaml` so records survive container restarts.  
+✔ **Secure API**: Add authentication for managing DNS entries.  
+✔ **Logging**: Capture query analytics. 
