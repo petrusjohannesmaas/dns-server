@@ -1,122 +1,232 @@
 # DNS Server
 
-### **1️⃣ Adding a Configuration File**
-Instead of hardcoding DNS records, we’ll use a configuration file (like CoreDNS does) to make your DNS server more flexible.
+---
 
-#### **Step 1: Create a Config File**
-Create a `dns_config.json` file:
-```json
-{
-    "records": {
-        "desktop.local": "192.168.1.100",
-        "laptop.local": "192.168.1.101",
-        "printer.local": "192.168.1.102"
-    }
-}
+## **Step 1: Build the DNS Server in Go**
+### **1. Install Dependencies**
+Ensure you have Go installed, then install the DNS and YAML libraries:
+
+```bash
+go get github.com/miekg/dns gopkg.in/yaml.v3
 ```
 
-#### **Step 2: Modify Your Go Code to Read the Config**
-Update `server.go` to read from the config file:
+### **2. Define the YAML File for DNS Records**
+Create `dns_records.yaml` for hostname-IP mappings:
+
+```yaml
+records:
+  - hostname: "dev-machine.local"
+    ip: "192.168.1.100"
+  - hostname: "server.local"
+    ip: "192.168.1.200"
+```
+
+### **3. Implement the DNS Server**
+Create `dns_server.go`:
+
 ```go
 package main
 
 import (
-    "encoding/json"
-    "fmt"
-    "io/ioutil"
-    "net"
-    "github.com/miekg/dns"
+	"fmt"
+	"gopkg.in/yaml.v3"
+	"io/ioutil"
+	"net"
+	"github.com/miekg/dns"
 )
 
-// Load DNS records from config file
-func loadConfig(filename string) (map[string]string, error) {
-    file, err := ioutil.ReadFile(filename)
-    if err != nil {
-        return nil, err
-    }
-    var config map[string]map[string]string
-    err = json.Unmarshal(file, &config)
-    return config["records"], err
+type DNSRecord struct {
+	Hostname string `yaml:"hostname"`
+	IP       string `yaml:"ip"`
 }
 
-// Handle DNS queries
-func handleDNSQuery(w dns.ResponseWriter, r *dns.Msg, records map[string]string) {
-    msg := new(dns.Msg)
-    msg.SetReply(r)
+type Config struct {
+	Records []DNSRecord `yaml:"records"`
+}
 
-    for _, q := range r.Question {
-        if q.Qtype == dns.TypeA {
-            if ip, exists := records[q.Name]; exists {
-                msg.Answer = append(msg.Answer, &dns.A{
-                    Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
-                    A:   net.ParseIP(ip),
-                })
-            }
-        }
-    }
-    w.WriteMsg(msg)
+var dnsRecords map[string]string
+
+func loadRecords() {
+	data, err := ioutil.ReadFile("dns_records.yaml")
+	if err != nil {
+		fmt.Println("Error reading YAML:", err)
+		return
+	}
+
+	var config Config
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		fmt.Println("Error parsing YAML:", err)
+		return
+	}
+
+	dnsRecords = make(map[string]string)
+	for _, record := range config.Records {
+		dnsRecords[record.Hostname+"."] = record.IP
+		fmt.Printf("Loaded: %s -> %s\n", record.Hostname, record.IP)
+	}
+}
+
+func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
+	m := new(dns.Msg)
+	m.SetReply(r)
+
+	for _, q := range r.Question {
+		if ip, found := dnsRecords[q.Name]; found {
+			rr := &dns.A{
+				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+				A:   net.ParseIP(ip),
+			}
+			m.Answer = append(m.Answer, rr)
+		}
+	}
+
+	w.WriteMsg(m)
 }
 
 func main() {
-    records, err := loadConfig("dns_config.json")
-    if err != nil {
-        fmt.Println("Failed to load config:", err)
-        return
-    }
+	loadRecords()
 
-    dns.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
-        handleDNSQuery(w, r, records)
-    })
+	dns.HandleFunc(".", handleDNSRequest)
+	server := &dns.Server{Addr: ":53", Net: "udp"}
 
-    server := &dns.Server{Addr: ":53", Net: "udp"}
-    fmt.Println("Starting DNS server on port 53...")
-
-    if err := server.ListenAndServe(); err != nil {
-        fmt.Println("Failed to start server:", err)
-    }
+	fmt.Println("Starting DNS server on port 53...")
+	err := server.ListenAndServe()
+	if err != nil {
+		fmt.Printf("Failed to start server: %v\n", err)
+	}
 }
 ```
-✅ Now your DNS server reads records from `dns_config.json`, making it **easier to update**!
+
+### **4. Run Your DNS Server**
+Start it:
+```bash
+go run dns_server.go
+```
+
+Test it:
+```bash
+dig @localhost dev-machine.local
+```
 
 ---
 
-### **2️⃣ Containerizing the Application**
-Now let’s containerize your Go-based DNS server using **Podman**.
+## **Step 2: Build the Web Front End**
+### **1. Create a Simple HTML Interface**
+Make `index.html`:
 
-#### **Step 1: Create a Dockerfile**
-Create a `Dockerfile`:
-```dockerfile
-FROM golang:latest
+```html
+<form id="dnsForm">
+    <label>Hostname:</label>
+    <input type="text" id="hostname" required>
 
-WORKDIR /app
+    <label>IP Address:</label>
+    <input type="text" id="ipAddress" required>
 
-COPY server.go dns_config.json .   # Copy files into the container
+    <button type="submit">Add Record</button>
+</form>
 
-RUN go mod init mydns && go mod tidy
-RUN go build -o dns-server server.go
+<script>
+document.getElementById("dnsForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = {
+        hostname: document.getElementById("hostname").value,
+        ip: document.getElementById("ipAddress").value,
+    };
 
-CMD ["/app/dns-server"]
+    const response = await fetch("/api/add-dns-record", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+    });
+
+    if (response.ok) {
+        alert("DNS record added!");
+    }
+});
+</script>
 ```
 
-#### **Step 2: Build the Container**
+### **2. Build an API to Update YAML**
+Modify `dns_server.go`:
+
+```go
+import (
+	"net/http"
+	"encoding/json"
+)
+
+func saveRecords() {
+	data, err := yaml.Marshal(Config{Records: convertMapToSlice(dnsRecords)})
+	if err != nil {
+		fmt.Println("Error encoding YAML:", err)
+		return
+	}
+
+	err = ioutil.WriteFile("dns_records.yaml", data, 0644)
+	if err != nil {
+		fmt.Println("Error writing YAML file:", err)
+	}
+}
+
+func addDNSRecord(w http.ResponseWriter, r *http.Request) {
+	var record DNSRecord
+	err := json.NewDecoder(r.Body).Decode(&record)
+	if err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	dnsRecords[record.Hostname+"."] = record.IP
+	saveRecords() // Persist changes to YAML
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func main() {
+	http.HandleFunc("/api/add-dns-record", addDNSRecord)
+	fmt.Println("DNS API running on port 8080")
+	http.ListenAndServe(":8080", nil)
+}
+```
+
+### **3. Run the Web Server**
+Start it:
+```bash
+go run dns_server.go
+```
+
+Test via curl:
+```bash
+curl -X POST http://localhost:8080/api/add-dns-record \
+     -H "Content-Type: application/json" \
+     -d '{"hostname":"test.local","ip":"192.168.1.150"}'
+```
+
+---
+
+## **Step 3: Integrate with Your Tenda Router**
+### **1. Configure DNS Settings**
+- Log into the router (`192.168.0.1`).
+- Go to **Advanced Settings** → **DNS Settings**.
+- In **Preferred DNS Server**, enter your DNS server’s IP (`192.168.1.100`).
+- In **Alternate DNS Server**, set a fallback (`8.8.8.8` for Google DNS).
+- Save and apply.
+
+### **2. Restart the Router**
+Reboot to ensure DNS settings are active.
+
+### **3. Test Network-Wide DNS Resolution**
 Run:
-```sh
-podman build -t mydns .
+```bash
+dig @192.168.1.100 dev-machine.local
 ```
 
-#### **Step 3: Run Your DNS Server Container**
-Start the container:
-```sh
-podman run -d --name mydns-container \
-    -p 53:53/udp \
-    -v ./dns_config.json:/app/dns_config.json \
-    mydns
-```
+---
 
-🔹 **Your Go-based DNS server is now running in a Podman container!**  
-🔹 **You can modify `dns_config.json` without changing the container itself.**
+## **Next Enhancements**
+✔ **Automatic reloads**: Ensure new records apply **without restarting** the server.  
+✔ **Persistent database storage**: Store records in **SQLite** instead of just YAML.  
+✔ **Security measures**: Add authentication to prevent unauthorized changes.  
 
-### Future enhancements:
-
-* Add logging
-* Add configuration file syntax check
+Would you like help setting up automatic reloads or adding authentication for secure record updates? 🚀
