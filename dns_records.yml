@@ -1,5 +1,5 @@
 records:
-  - hostname: "lubuntu.local"
-    ip: "192.168.0.102"
-  - hostname: "debian.local"
-    ip: "192.168.0.112"
+  - hostname: "dev-machine.local"
+    ip: "192.168.0.100"
+  - hostname: "server.local"
+    ip: "192.168.0.200"

@@ -1,0 +1,11 @@
+---
+services:
+  dns-server:
+    image: go-dns-server
+    container_name: dns-server
+    build: .
+    ports:
+      - "53:53/udp"
+    volumes:
+      - ./dns_records.yml:/app/dns_records.yml
+    restart: always
